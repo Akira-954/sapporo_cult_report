@@ -115,10 +115,20 @@
     .form-group textarea,
     .form-group select {
       width: 100%;
-      padding: 8px;
+      height: 40px; /* 高さを40pxに統一 */
+      padding: 8px 12px;
       box-sizing: border-box;
       border: 1px solid #ccc;
       border-radius: 6px;
+      font-size: 14px; /* スマホで勝手にズームされるのを防ぐサイズ */
+      background-color: #fff;
+      -webkit-appearance: none; /* iOS独自のスタイルをリセット */
+      appearance: none;
+    }
+
+    /* textarea だけは高さ固定を解除して複数行入力できるようにする */
+    .form-group textarea {
+      height: auto;
     }
 
     /* チェックボックス群のスタイル */
