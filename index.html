@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>電柱の怪文書マップ</title>
+  <title>SAPPORO CULT REPORT</title>
   
   <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -14,6 +14,9 @@
 
   <!-- Exif.js -->
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+
+  <!-- heic2any (HEIC to JPEG 変換ライブラリ) -->
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 
   <style>
     html, body {
@@ -315,8 +318,11 @@
     });
   });
 
-  // 5. Exif 解析処理
-  let targetLocation = null;
+  // --------------------------------------------------
+  // 5. Exif（写真のGPS位置情報）解析処理 (HEIC対応版)
+  // --------------------------------------------------
+  let targetLocation = null; // 投稿先の緯度・経度保持用
+  let convertedFile = null;  // 変換後（またはそのままの）アップロード用ファイル
 
   function convertDMSToDD(dms, ref) {
     if (!dms) return null;
@@ -329,13 +335,47 @@
   const exifStatus = document.getElementById('exif-status');
   const submitBtn = document.getElementById('submit-btn');
 
-  fileInput.addEventListener('change', function(e) {
-    const file = e.target.files[0];
+  fileInput.addEventListener('change', async function(e) {
+    let file = e.target.files[0];
     if (!file) return;
 
     exifStatus.style.color = '#007aff';
-    exifStatus.textContent = '写真の位置情報を解析中...';
+    exifStatus.textContent = '画像を処理中...';
     targetLocation = null;
+    convertedFile = null;
+
+    // A. HEIC / HEIF の判定と JPEG への変換
+    const fileNameLower = file.name.toLowerCase();
+    const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
+
+    if (isHeic) {
+      exifStatus.textContent = '🔄 HEIC画像をJPEGに変換中...';
+      try {
+        const convertedBlob = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.8
+        });
+
+        // 配列で返ってきた場合への対応
+        const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+
+        // HEICから変換したJPEGファイルを生成
+        const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+        file = new File([blobResult], newFileName, { type: 'image/jpeg' });
+        convertedFile = file;
+      } catch (err) {
+        console.error('HEIC変換エラー:', err);
+        exifStatus.style.color = '#d9534f';
+        exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
+        return;
+      }
+    } else {
+      convertedFile = file;
+    }
+
+    // B. Exif 位置情報の解析
+    exifStatus.textContent = '写真の位置情報を解析中...';
 
     EXIF.getData(file, function() {
       const latData = EXIF.getTag(this, 'GPSLatitude');
@@ -354,7 +394,7 @@
       } else {
         targetLocation = null;
         exifStatus.style.color = '#d9534f';
-        exifStatus.textContent = '❌ エラー: GPS情報がありません。位置情報付きの写真を選んでください。';
+        exifStatus.textContent = '❌ エラー: この写真にはGPS位置情報（Exif）が含まれていません。';
       }
     });
   });
@@ -392,7 +432,10 @@
       const foundAt = document.getElementById('post-found-at').value;
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
-      const file = fileInput.files[0];
+
+      // ★ 修正点: HEIC変換済みのファイルがあればそれを優先、なければ選択されたファイルを使う ★
+      const file = convertedFile || fileInput.files[0];
+      if (!file) return alert('画像を選択してください。');
 
       // チェックボックスで選択された特徴を配列にする
       const checkedTags = Array.from(
@@ -405,7 +448,9 @@
 
       const { error: uploadError } = await supabaseClient.storage
         .from('strange-docs')
-        .upload(fileName, file);
+        .upload(fileName, file, {
+          contentType: file.type // MIMEタイプを明示指定
+        });
 
       if (uploadError) throw uploadError;
 
@@ -414,7 +459,7 @@
         .from('strange-docs')
         .getPublicUrl(fileName);
 
-      // C. Databaseへデータ挿入（退避した targetLng, targetLat を使用）
+      // C. Databaseへデータ挿入
       const { error: insertError } = await supabaseClient
         .from('documents')
         .insert([
@@ -439,9 +484,10 @@
       document.getElementById('post-found-at').valueAsDate = new Date();
       exifStatus.textContent = '';
       targetLocation = null;
+      convertedFile = null; // ★ 変数を初期化
       modal.style.display = 'none';
 
-      // ★ 修正点: 退避しておいた座標でマップ移動＆ピン再読み込み ★
+      // ピンの更新
       map.flyTo([targetLat, targetLng], 16);
       loadMarkers(targetLat, targetLng);
 
