@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>電柱の怪文書マップ</title>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Supabase JS SDK -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+  <!-- Exif.js -->
+  <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      font-family: sans-serif;
+    }
+    #map {
+      height: 100vh;
+      width: 100vw;
+    }
+    .popup-img {
+      width: 100%;
+      max-height: 150px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+    .tag-badge {
+      display: inline-block;
+      background: #eef2f5;
+      color: #333;
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 11px;
+      margin-right: 4px;
+      margin-top: 4px;
+    }
+
+    /* 現在地ボタン */
+    .locate-btn {
+      position: absolute;
+      bottom: 30px;
+      right: 20px;
+      z-index: 1000;
+      background: #ffffff;
+      border: 2px solid rgba(0, 0, 0, 0.2);
+      border-radius: 50%;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      cursor: pointer;
+    }
+    .locate-btn svg {
+      width: 24px;
+      height: 24px;
+      fill: #333;
+    }
+
+    /* 投稿ボタン */
+    .post-trigger-btn {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 1000;
+      background: #ff3b30;
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-weight: bold;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    /* 投稿フォームモーダル */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: #fff;
+      padding: 20px;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 420px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .modal-content h2 { margin-top: 0; font-size: 18px; }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 12px; margin-bottom: 4px; color: #555; font-weight: bold; }
+    .form-group input[type="text"],
+    .form-group input[type="date"],
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+
+    /* チェックボックス群のスタイル */
+    .checkbox-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      background: #f8f9fa;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #eee;
+    }
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .checkbox-item input {
+      margin-right: 6px;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .btn-cancel { background: #eee; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    .btn-submit { background: #ff3b30; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    
+    .exif-status {
+      font-size: 11px;
+      margin-top: 4px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<button class="post-trigger-btn" id="open-form-btn">＋ 怪文書を報告</button>
+
+<button id="locate-btn" class="locate-btn" title="現在地に移動">
+  <svg viewBox="0 0 24 24">
+    <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+  </svg>
+</button>
+
+<!-- 投稿フォームモーダル -->
+<div class="modal-overlay" id="post-modal">
+  <div class="modal-content">
+    <h2>怪文書の新規投稿</h2>
+    <form id="post-form">
+      <div class="form-group">
+        <label>タイトル *</label>
+        <input type="text" id="post-title" required placeholder="例: ○○公園横の電柱の貼り紙">
+      </div>
+
+      <div class="form-group">
+        <label>写真 * (GPS位置情報付き)</label>
+        <input type="file" id="post-image" accept="image/*" required>
+        <div class="exif-status" id="exif-status"></div>
+      </div>
+
+      <div class="form-group">
+        <label>発見日 *</label>
+        <input type="date" id="post-found-at" required>
+      </div>
+
+      <div class="form-group">
+        <label>カテゴリ</label>
+        <select id="post-category">
+          <option value="denchu">電柱怪文書</option>
+          <option value="etc">その他</option>
+        </select>
+      </div>
+
+      <!-- 特徴（チェックボックス） -->
+      <div class="form-group">
+        <label>特徴（複数選択可）</label>
+        <div class="checkbox-grid">
+          <label class="checkbox-item"><input type="checkbox" name="post-tags" value="コインボランティア">コインボランティア</label>
+          <label class="checkbox-item"><input type="checkbox" name="post-tags" value="水濡れ">水濡れ</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>説明・解読メモ</label>
+        <textarea id="post-desc" rows="3" placeholder="書かれている内容や特徴"></textarea>
+      </div>
+      
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="close-form-btn">キャンセル</button>
+        <button type="submit" class="btn-submit" id="submit-btn">投稿する</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  // 1. Supabase 初期化
+  const SUPABASE_URL = 'https://ixvogawbwssnxgdilhyi.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_005UZ6tUpnTfsEd5_PmmdA_ABG_kXJO';
+
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // 今日をデフォルトの発見日にセット
+  document.getElementById('post-found-at').valueAsDate = new Date();
+
+  // 2. Leaflet マップ初期化
+  const map = L.map('map').setView([43.0642, 141.3469], 13);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // 3. マップ上のピンを表示する関数
+  async function loadMarkers(lat, lng, radiusMeters = 10000) {
+    try {
+      const { data, error } = await supabaseClient.rpc('get_documents_nearby', {
+        lat: lat,
+        lng: lng,
+        radius_meters: radiusMeters
+      });
+
+      if (error) return console.error('Supabase Error:', error.message);
+
+      if (data) {
+        data.forEach(doc => {
+          // タグのバッジ表示作成
+          const tagsHtml = doc.tags && doc.tags.length > 0 
+            ? doc.tags.map(tag => `<span class="tag-badge">#${tag}</span>`).join('') 
+            : '';
+
+          // 登録日・発見日のフォーマット
+          const foundDate = doc.found_at ? doc.found_at : '不明';
+          const createdDate = doc.created_at ? new Date(doc.created_at).toLocaleDateString('ja-JP') : '';
+
+          const popupContent = `
+            <div style="max-width: 220px;">
+              <img src="${doc.image_url}" class="popup-img" alt="怪文書画像"/>
+              <h3 style="margin: 8px 0 4px 0; font-size: 15px;">${doc.title}</h3>
+              <div style="font-size: 11px; color: #888; margin-bottom: 6px;">
+                📅 発見: ${foundDate} / 登録: ${createdDate}
+              </div>
+              <p style="font-size: 12px; color: #444; margin: 0 0 6px 0;">${doc.description || ''}</p>
+              <div style="margin-bottom: 8px;">${tagsHtml}</div>
+              <button class="delete-btn" onclick="deleteDocument('${doc.id}')" style="
+                background: none;
+                border: 1px solid #d9534f;
+                color: #d9534f;
+                padding: 3px 8px;
+                border-radius: 4px;
+                font-size: 11px;
+                cursor: pointer;
+                width: 100%;
+              ">🗑 データを削除する</button>
+            </div>
+          `;
+
+          L.marker([doc.lat, doc.lng])
+            .addTo(map)
+            .bindPopup(popupContent);
+        });
+      }
+    } catch (e) {
+      console.error('Fetch Error:', e);
+    }
+  }
+
+  // 初期読み込み
+  const center = map.getCenter();
+  loadMarkers(center.lat, center.lng);
+
+  map.on('moveend', () => {
+    const newCenter = map.getCenter();
+    loadMarkers(newCenter.lat, newCenter.lng);
+  });
+
+  // 4. 現在地取得機能
+  let currentLocationMarker = null;
+  document.getElementById('locate-btn').addEventListener('click', () => {
+    if (!navigator.geolocation) return alert('位置情報に対応していません。');
+
+    navigator.geolocation.getCurrentPosition((position) => {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      map.flyTo([lat, lng], 15);
+
+      if (currentLocationMarker) map.removeLayer(currentLocationMarker);
+
+      currentLocationMarker = L.circleMarker([lat, lng], {
+        radius: 8, fillColor: '#007aff', color: '#ffffff', weight: 2, fillOpacity: 0.9
+      }).addTo(map).bindPopup('現在地').openPopup();
+    });
+  });
+
+  // 5. Exif 解析処理
+  let targetLocation = null;
+
+  function convertDMSToDD(dms, ref) {
+    if (!dms) return null;
+    let dd = dms[0] + dms[1] / 60 + dms[2] / 3600;
+    if (ref === "S" || ref === "W") dd = dd * -1;
+    return dd;
+  }
+
+  const fileInput = document.getElementById('post-image');
+  const exifStatus = document.getElementById('exif-status');
+  const submitBtn = document.getElementById('submit-btn');
+
+  fileInput.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    exifStatus.style.color = '#007aff';
+    exifStatus.textContent = '写真の位置情報を解析中...';
+    targetLocation = null;
+
+    EXIF.getData(file, function() {
+      const latData = EXIF.getTag(this, 'GPSLatitude');
+      const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
+      const lngData = EXIF.getTag(this, 'GPSLongitude');
+      const lngRef = EXIF.getTag(this, 'GPSLongitudeRef');
+
+      const lat = convertDMSToDD(latData, latRef);
+      const lng = convertDMSToDD(lngData, lngRef);
+
+      if (lat && lng) {
+        targetLocation = { lat: lat, lng: lng };
+        exifStatus.style.color = '#28a745';
+        exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        map.flyTo([lat, lng], 16);
+      } else {
+        targetLocation = null;
+        exifStatus.style.color = '#d9534f';
+        exifStatus.textContent = '❌ エラー: GPS情報がありません。位置情報付きの写真を選んでください。';
+      }
+    });
+  });
+
+  // 6. 投稿送信処理
+  const modal = document.getElementById('post-modal');
+  const openBtn = document.getElementById('open-form-btn');
+  const closeBtn = document.getElementById('close-form-btn');
+  const postForm = document.getElementById('post-form');
+
+  openBtn.addEventListener('click', () => {
+    modal.style.display = 'flex';
+    exifStatus.textContent = '';
+    targetLocation = null;
+  });
+  closeBtn.addEventListener('click', () => modal.style.display = 'none');
+  postForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    // 1. 位置情報（Exif）のチェック
+    if (!targetLocation) {
+      alert('⚠️ 選択された写真から位置情報（Exif）を取得できませんでした。');
+      return;
+    }
+
+    // ★ 座標を変数にローカル保持（エラー防止） ★
+    const targetLat = targetLocation.lat;
+    const targetLng = targetLocation.lng;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '送信中...';
+
+    try {
+      const title = document.getElementById('post-title').value;
+      const foundAt = document.getElementById('post-found-at').value;
+      const category = document.getElementById('post-category').value;
+      const description = document.getElementById('post-desc').value;
+      const file = fileInput.files[0];
+
+      // チェックボックスで選択された特徴を配列にする
+      const checkedTags = Array.from(
+        document.querySelectorAll('input[name="post-tags"]:checked')
+      ).map(cb => cb.value);
+
+      // A. Storageへアップロード
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+      const { error: uploadError } = await supabaseClient.storage
+        .from('strange-docs')
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      // B. 公開URL取得
+      const { data: urlData } = supabaseClient.storage
+        .from('strange-docs')
+        .getPublicUrl(fileName);
+
+      // C. Databaseへデータ挿入（退避した targetLng, targetLat を使用）
+      const { error: insertError } = await supabaseClient
+        .from('documents')
+        .insert([
+          {
+            title: title,
+            found_at: foundAt,
+            category: category,
+            tags: checkedTags,
+            description: description,
+            image_url: urlData.publicUrl,
+            location: `SRID=4326;POINT(${targetLng} ${targetLat})`,
+            is_approved: true
+          }
+        ]);
+
+      if (insertError) throw insertError;
+
+      alert('投稿が完了しました！');
+      
+      // フォームと変数の初期化
+      postForm.reset();
+      document.getElementById('post-found-at').valueAsDate = new Date();
+      exifStatus.textContent = '';
+      targetLocation = null;
+      modal.style.display = 'none';
+
+      // ★ 修正点: 退避しておいた座標でマップ移動＆ピン再読み込み ★
+      map.flyTo([targetLat, targetLng], 16);
+      loadMarkers(targetLat, targetLng);
+
+    } catch (err) {
+      console.error('投稿エラー:', err);
+      alert('投稿に失敗しました: ' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '投稿する';
+    }
+  });
+  // --------------------------------------------------
+  // 7. パスワード確認付き削除処理
+  // --------------------------------------------------
+  async function deleteDocument(docId) {
+    // 1. パスワードの入力プロンプトを表示
+    const password = prompt('削除するためのパスワードを入力してください:');
+    
+    // キャンセルされた場合や空文字の場合は処理中断
+    if (password === null) return;
+    if (password.trim() === '') {
+      alert('パスワードを入力してください。');
+      return;
+    }
+
+    if (!confirm('本当にこの投稿を削除しますか？')) return;
+
+    try {
+      // 2. Supabase の RPC 関数を呼び出してパスワード検証と削除を実行
+      const { data: isSuccess, error } = await supabaseClient.rpc('delete_document_with_password', {
+        doc_id: docId,
+        pass: password
+      });
+
+      if (error) throw error;
+
+      if (isSuccess) {
+        alert('データを削除しました。');
+        // マップ上のピンを再読み込み
+        const center = map.getCenter();
+        loadMarkers(center.lat, center.lng);
+      } else {
+        alert('❌ パスワードが正しくありません。');
+      }
+    } catch (err) {
+      console.error('削除エラー:', err);
+      alert('削除処理に失敗しました: ' + err.message);
+    }
+  }
+</script>
+
+</body>
+</html>
