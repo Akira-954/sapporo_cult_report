@@ -72,10 +72,10 @@
 
     /* 投稿ボタン */
     .post-trigger-btn {
-      position: fixed; /* absolute から fixed に変更すると画面スクロールの影響を受けにくくなります */
+      position: fixed;
       top: 20px;
       left: 20px;
-      z-index: 9990; /* Leafletの標準要素より確実に手前に表示 */
+      z-index: 9990;
       background: #ff3b30;
       color: white;
       border: none;
@@ -85,7 +85,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
       cursor: pointer;
       font-size: 14px;
-      -webkit-transform: translateZ(0); /* iOSでのチラつき・消える現象を防止 */
+      -webkit-transform: translateZ(0);
     }
 
     /* 投稿フォームモーダル */
@@ -95,9 +95,9 @@
       left: 0;
       width: 100vw;
       height: 100vh;
-      height: 100dvh; /* スマホのアドレスバー対策 */
+      height: 100dvh;
       background: rgba(0, 0, 0, 0.6);
-      z-index: 9999;  /* Leafletマップより絶対に上にする */
+      z-index: 9999;
       display: none;
       align-items: center;
       justify-content: center;
@@ -111,7 +111,7 @@
       max-height: 80vh;
       overflow-y: auto;
       box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-      -webkit-overflow-scrolling: touch; /* スマホでのスクロールをスムーズに */
+      -webkit-overflow-scrolling: touch;
     }
     .modal-content h2 { margin-top: 0; font-size: 18px; }
     .form-group { margin-bottom: 12px; }
@@ -121,18 +121,17 @@
     .form-group textarea,
     .form-group select {
       width: 100%;
-      height: 40px; /* 高さを40pxに統一 */
+      height: 40px;
       padding: 8px 12px;
       box-sizing: border-box;
       border: 1px solid #ccc;
       border-radius: 6px;
-      font-size: 14px; /* スマホで勝手にズームされるのを防ぐサイズ */
+      font-size: 14px;
       background-color: #fff;
-      -webkit-appearance: none; /* iOS独自のスタイルをリセット */
+      -webkit-appearance: none;
       appearance: none;
     }
 
-    /* textarea だけは高さ固定を解除して複数行入力できるようにする */
     .form-group textarea {
       height: auto;
     }
@@ -190,13 +189,9 @@
   <div class="modal-content">
     <h2>怪文書の新規投稿</h2>
     <form id="post-form">
-      <div class="form-group">
-        <label>タイトル *</label>
-        <input type="text" id="post-title" required placeholder="例: ○○公園横の電柱の貼り紙">
-      </div>
 
       <div class="form-group">
-        <label>写真 * (GPS位置情報付き)</label>
+        <label>写真 * (GPS位置情報・撮影日時付き)</label>
         <input type="file" id="post-image" accept="image/*" required>
         <div class="exif-status" id="exif-status"></div>
       </div>
@@ -266,19 +261,17 @@
 
       if (data) {
         data.forEach(doc => {
-          // タグのバッジ表示作成
           const tagsHtml = doc.tags && doc.tags.length > 0 
             ? doc.tags.map(tag => `<span class="tag-badge">#${tag}</span>`).join('') 
             : '';
 
-          // 登録日・発見日のフォーマット
           const foundDate = doc.found_at ? doc.found_at : '不明';
           const createdDate = doc.created_at ? new Date(doc.created_at).toLocaleDateString('ja-JP') : '';
 
           const popupContent = `
             <div style="max-width: 220px;">
               <img src="${doc.image_url}" class="popup-img" alt="怪文書画像"/>
-              <h3 style="margin: 8px 0 4px 0; font-size: 15px;">${doc.title}</h3>
+              <h3 style="margin: 8px 0 4px 0; font-size: 15px;">${doc.title || '怪文書'}</h3>
               <div style="font-size: 11px; color: #888; margin-bottom: 6px;">
                 📅 発見: ${foundDate} / 登録: ${createdDate}
               </div>
@@ -335,16 +328,30 @@
   });
 
   // --------------------------------------------------
-  // 5. Exif（写真のGPS位置情報）解析処理 (HEIC対応版)
+  // 5. Exif（位置情報・撮影日時）解析処理
   // --------------------------------------------------
-  let targetLocation = null; // 投稿先の緯度・経度保持用
-  let convertedFile = null;  // 変換後（またはそのままの）アップロード用ファイル
+  let targetLocation = null;
+  let convertedFile = null;
+  let photoFormattedDateTime = null; // 撮影日時（タイトル用）保持変数
 
   function convertDMSToDD(dms, ref) {
     if (!dms) return null;
     let dd = dms[0] + dms[1] / 60 + dms[2] / 3600;
     if (ref === "S" || ref === "W") dd = dd * -1;
     return dd;
+  }
+
+  // EXIFのDateTime文字列 ("YYYY:MM:DD HH:MM:SS") を "YYYY年MM月DD日 HH:mm" に変換する関数
+  function formatExifDateTime(dateTimeStr) {
+    if (!dateTimeStr) return null;
+    const parts = dateTimeStr.split(' ');
+    if (parts.length < 2) return null;
+    const dateParts = parts[0].split(':'); // YYYY, MM, DD
+    const timeParts = parts[1].split(':'); // HH, MM, SS
+    if (dateParts.length === 3 && timeParts.length >= 2) {
+      return `${dateParts[0]}年${dateParts[1]}月${dateParts[2]}日 ${timeParts[0]}:${timeParts[1]}`;
+    }
+    return null;
   }
 
   const fileInput = document.getElementById('post-image');
@@ -359,6 +366,7 @@
     exifStatus.textContent = '画像を処理中...';
     targetLocation = null;
     convertedFile = null;
+    photoFormattedDateTime = null;
 
     // A. HEIC / HEIF の判定と JPEG への変換
     const fileNameLower = file.name.toLowerCase();
@@ -373,10 +381,7 @@
           quality: 0.8
         });
 
-        // 配列で返ってきた場合への対応
         const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-
-        // HEICから変換したJPEGファイルを生成
         const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
         file = new File([blobResult], newFileName, { type: 'image/jpeg' });
         convertedFile = file;
@@ -390,10 +395,11 @@
       convertedFile = file;
     }
 
-    // B. Exif 位置情報の解析
-    exifStatus.textContent = '写真の位置情報を解析中...';
+    // B. Exif 位置情報および撮影日時の解析
+    exifStatus.textContent = '写真のExif情報を解析中...';
 
     EXIF.getData(file, function() {
+      // 1. 位置情報（GPS）の取得
       const latData = EXIF.getTag(this, 'GPSLatitude');
       const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
       const lngData = EXIF.getTag(this, 'GPSLongitude');
@@ -402,10 +408,21 @@
       const lat = convertDMSToDD(latData, latRef);
       const lng = convertDMSToDD(lngData, lngRef);
 
+      // 2. 撮影日時の取得 ("YYYY:MM:DD HH:MM:SS" 形式)
+      const dateTime = EXIF.getTag(this, 'DateTimeOriginal') || EXIF.getTag(this, 'DateTime');
+      if (dateTime) {
+        // 発見日のフォーム（YYYY-MM-DD）にセット
+        const datePart = dateTime.split(' ')[0].replace(/:/g, '-');
+        document.getElementById('post-found-at').value = datePart;
+
+        // タイトル用に「YYYY年MM月DD日 HH:mm」形式を作成して保持
+        photoFormattedDateTime = formatExifDateTime(dateTime);
+      }
+
       if (lat && lng) {
         targetLocation = { lat: lat, lng: lng };
         exifStatus.style.color = '#28a745';
-        exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        exifStatus.textContent = `✓ 位置情報・撮影日時を取得しました (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
         map.flyTo([lat, lng], 16);
       } else {
         targetLocation = null;
@@ -421,7 +438,6 @@
   const closeBtn = document.getElementById('close-form-btn');
   const postForm = document.getElementById('post-form');
 
-  // ★ 追加: Leaflet マップへのタッチ・クリックイベントの突き抜け（伝播）を完全に遮断 ★
   L.DomEvent.disableClickPropagation(openBtn);
   L.DomEvent.disableClickPropagation(modal);
   
@@ -429,19 +445,18 @@
     modal.style.display = 'flex';
     exifStatus.textContent = '';
     targetLocation = null;
+    photoFormattedDateTime = null;
   });
   
   closeBtn.addEventListener('click', () => modal.style.display = 'none');
   postForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    // 1. 位置情報（Exif）のチェック
     if (!targetLocation) {
       alert('⚠️ 選択された写真から位置情報（Exif）を取得できませんでした。');
       return;
     }
 
-    // ★ 座標を変数にローカル保持（エラー防止） ★
     const targetLat = targetLocation.lat;
     const targetLng = targetLocation.lng;
 
@@ -449,16 +464,16 @@
     submitBtn.textContent = '送信中...';
 
     try {
-      const title = document.getElementById('post-title').value;
       const foundAt = document.getElementById('post-found-at').value;
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
 
-      // ★ 修正点: HEIC変換済みのファイルがあればそれを優先、なければ選択されたファイルを使う ★
+      // ★ 撮影日時（時間つき）があればそれをタイトルに、なければ発見日（年月日）をタイトルにする
+      const title = photoFormattedDateTime || `${foundAt}の投稿`;
+
       const file = convertedFile || fileInput.files[0];
       if (!file) return alert('画像を選択してください。');
 
-      // チェックボックスで選択された特徴を配列にする
       const checkedTags = Array.from(
         document.querySelectorAll('input[name="post-tags"]:checked')
       ).map(cb => cb.value);
@@ -470,7 +485,7 @@
       const { error: uploadError } = await supabaseClient.storage
         .from('strange-docs')
         .upload(fileName, file, {
-          contentType: file.type // MIMEタイプを明示指定
+          contentType: file.type
         });
 
       if (uploadError) throw uploadError;
@@ -500,15 +515,14 @@
 
       alert('投稿が完了しました！');
       
-      // フォームと変数の初期化
       postForm.reset();
       document.getElementById('post-found-at').valueAsDate = new Date();
       exifStatus.textContent = '';
       targetLocation = null;
-      convertedFile = null; // ★ 変数を初期化
+      convertedFile = null;
+      photoFormattedDateTime = null;
       modal.style.display = 'none';
 
-      // ピンの更新
       map.flyTo([targetLat, targetLng], 16);
       loadMarkers(targetLat, targetLng);
 
@@ -520,14 +534,11 @@
       submitBtn.textContent = '投稿する';
     }
   });
-  // --------------------------------------------------
+
   // 7. パスワード確認付き削除処理
-  // --------------------------------------------------
   async function deleteDocument(docId) {
-    // 1. パスワードの入力プロンプトを表示
     const password = prompt('削除するためのパスワードを入力してください:');
     
-    // キャンセルされた場合や空文字の場合は処理中断
     if (password === null) return;
     if (password.trim() === '') {
       alert('パスワードを入力してください。');
@@ -537,7 +548,6 @@
     if (!confirm('本当にこの投稿を削除しますか？')) return;
 
     try {
-      // 2. Supabase の RPC 関数を呼び出してパスワード検証と削除を実行
       const { data: isSuccess, error } = await supabaseClient.rpc('delete_document_with_password', {
         doc_id: docId,
         pass: password
@@ -547,7 +557,6 @@
 
       if (isSuccess) {
         alert('データを削除しました。');
-        // マップ上のピンを再読み込み
         const center = map.getCenter();
         loadMarkers(center.lat, center.lng);
       } else {
