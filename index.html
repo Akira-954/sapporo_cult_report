@@ -447,15 +447,15 @@
   L.DomEvent.disableClickPropagation(openBtn);
   L.DomEvent.disableClickPropagation(modal);
   
-  openBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+openBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     modal.style.display = 'flex';
     exifStatus.textContent = '';
     targetLocation = null;
   });
-  
+
   closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+    e.preventDefault();
     modal.style.display = 'none';
   });
 
