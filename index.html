@@ -88,7 +88,7 @@
     }
 
     /* 投稿フォームモーダル */
-    .modal-overlay {
+     .modal-overlay {
       position: fixed;
       top: 0;
       left: 0;
@@ -270,8 +270,8 @@
             ? doc.tags.map(tag => `<span class="tag-badge">#${tag}</span>`).join('') 
             : '';
 
-          // 登録日・発見日のフォーマット（スラッシュ区切りで統一）
-          const foundDate = doc.found_at ? doc.found_at.replace(/-/g, '/') : '不明';
+          // 登録日・発見日のフォーマット
+          const foundDate = doc.found_at ? doc.found_at : '不明';
           const createdDate = doc.created_at ? new Date(doc.created_at).toLocaleDateString('ja-JP') : '';
 
           const popupContent = `
@@ -334,7 +334,7 @@
   });
 
   // --------------------------------------------------
-  // 5. Exif（写真のGPS位置情報および撮影日時）解析処理
+  // 5. Exif（写真のGPS位置情報）解析処理 (HEIC対応版)
   // --------------------------------------------------
   let targetLocation = null; // 投稿先の緯度・経度保持用
   let convertedFile = null;  // 変換後（またはそのままの）アップロード用ファイル
@@ -344,19 +344,6 @@
     let dd = dms[0] + dms[1] / 60 + dms[2] / 3600;
     if (ref === "S" || ref === "W") dd = dd * -1;
     return dd;
-  }
-
-  // Exifの日時文字列 (例: "2026:10:07 14:30:00") を YYYY-MM-DD に変換する関数
-  function parseExifDate(dateTimeStr) {
-    if (!dateTimeStr) return null;
-    const parts = dateTimeStr.split(' ')[0].split(':');
-    if (parts.length === 3) {
-      const year = parts[0];
-      const month = parts[1].padStart(2, '0');
-      const day = parts[2].padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-    return null;
   }
 
   const fileInput = document.getElementById('post-image');
@@ -402,11 +389,10 @@
       convertedFile = file;
     }
 
-    // B. Exif 位置情報および撮影日時の解析
-    exifStatus.textContent = '写真の情報を解析中...';
+    // B. Exif 位置情報の解析
+    exifStatus.textContent = '写真の位置情報を解析中...';
 
     EXIF.getData(file, function() {
-      // 1. 位置情報の取得
       const latData = EXIF.getTag(this, 'GPSLatitude');
       const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
       const lngData = EXIF.getTag(this, 'GPSLongitude');
@@ -415,19 +401,10 @@
       const lat = convertDMSToDD(latData, latRef);
       const lng = convertDMSToDD(lngData, lngRef);
 
-      // 2. 撮影日時の取得（DateTimeOriginal または DateTime）
-      const dateTimeOriginal = EXIF.getTag(this, 'DateTimeOriginal') || EXIF.getTag(this, 'DateTime');
-      const formattedDate = parseExifDate(dateTimeOriginal);
-
-      if (formattedDate) {
-        document.getElementById('post-found-at').value = formattedDate;
-      }
-
       if (lat && lng) {
         targetLocation = { lat: lat, lng: lng };
         exifStatus.style.color = '#28a745';
-        let dateMsg = formattedDate ? ` (撮影日: ${formattedDate.replace(/-/g, '/')})` : '';
-        exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})${dateMsg}`;
+        exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
         map.flyTo([lat, lng], 16);
       } else {
         targetLocation = null;
@@ -443,32 +420,17 @@
   const closeBtn = document.getElementById('close-form-btn');
   const postForm = document.getElementById('post-form');
 
-  // Leaflet マップへのタッチ・クリックイベントの伝播遮断
+  // ★ 追加: Leaflet マップへのタッチ・クリックイベントの突き抜け（伝播）を完全に遮断 ★
   L.DomEvent.disableClickPropagation(openBtn);
   L.DomEvent.disableClickPropagation(modal);
   
-openBtn.addEventListener('click', (e) => {
-    e.preventDefault();
+  openBtn.addEventListener('click', () => {
     modal.style.display = 'flex';
     exifStatus.textContent = '';
     targetLocation = null;
   });
-
-  closeBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    modal.style.display = 'none';
-  });
-
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      modal.style.display = 'none';
-    }
-  });
-
-  document.querySelector('.modal-content').addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
-
+  
+  closeBtn.addEventListener('click', () => modal.style.display = 'none');
   postForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -478,6 +440,7 @@ openBtn.addEventListener('click', (e) => {
       return;
     }
 
+    // ★ 座標を変数にローカル保持（エラー防止） ★
     const targetLat = targetLocation.lat;
     const targetLng = targetLocation.lng;
 
@@ -490,9 +453,11 @@ openBtn.addEventListener('click', (e) => {
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
 
+      // ★ 修正点: HEIC変換済みのファイルがあればそれを優先、なければ選択されたファイルを使う ★
       const file = convertedFile || fileInput.files[0];
       if (!file) return alert('画像を選択してください。');
 
+      // チェックボックスで選択された特徴を配列にする
       const checkedTags = Array.from(
         document.querySelectorAll('input[name="post-tags"]:checked')
       ).map(cb => cb.value);
@@ -504,7 +469,7 @@ openBtn.addEventListener('click', (e) => {
       const { error: uploadError } = await supabaseClient.storage
         .from('strange-docs')
         .upload(fileName, file, {
-          contentType: file.type
+          contentType: file.type // MIMEタイプを明示指定
         });
 
       if (uploadError) throw uploadError;
@@ -539,7 +504,7 @@ openBtn.addEventListener('click', (e) => {
       document.getElementById('post-found-at').valueAsDate = new Date();
       exifStatus.textContent = '';
       targetLocation = null;
-      convertedFile = null;
+      convertedFile = null; // ★ 変数を初期化
       modal.style.display = 'none';
 
       // ピンの更新
@@ -554,13 +519,14 @@ openBtn.addEventListener('click', (e) => {
       submitBtn.textContent = '投稿する';
     }
   });
-
   // --------------------------------------------------
   // 7. パスワード確認付き削除処理
   // --------------------------------------------------
   async function deleteDocument(docId) {
+    // 1. パスワードの入力プロンプトを表示
     const password = prompt('削除するためのパスワードを入力してください:');
     
+    // キャンセルされた場合や空文字の場合は処理中断
     if (password === null) return;
     if (password.trim() === '') {
       alert('パスワードを入力してください。');
@@ -570,6 +536,7 @@ openBtn.addEventListener('click', (e) => {
     if (!confirm('本当にこの投稿を削除しますか？')) return;
 
     try {
+      // 2. Supabase の RPC 関数を呼び出してパスワード検証と削除を実行
       const { data: isSuccess, error } = await supabaseClient.rpc('delete_document_with_password', {
         doc_id: docId,
         pass: password
@@ -579,6 +546,7 @@ openBtn.addEventListener('click', (e) => {
 
       if (isSuccess) {
         alert('データを削除しました。');
+        // マップ上のピンを再読み込み
         const center = map.getCenter();
         loadMarkers(center.lat, center.lng);
       } else {
