@@ -346,48 +346,47 @@
   const submitBtn = document.getElementById('submit-btn');
 
   fileInput.addEventListener('change', async function(e) {
-    let file = e.target.files[0];
-    if (!file) return;
+    const rawFile = e.target.files[0];
+    if (!rawFile) return;
 
     exifStatus.style.color = '#007aff';
     exifStatus.textContent = '画像を処理中...';
     targetLocation = null;
     convertedFile = null;
 
-    // A. HEIC / HEIF の判定と JPEG への変換
-    const fileNameLower = file.name.toLowerCase();
-    const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
+    let targetFile = rawFile;
+
+    // A. HEIC / HEIF の判定と JPEG への変換（主にiOS用）
+    const fileNameLower = rawFile.name.toLowerCase();
+    const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || rawFile.type === 'image/heic';
 
     if (isHeic) {
       exifStatus.textContent = '🔄 HEIC画像をJPEGに変換中...';
       try {
         const convertedBlob = await heic2any({
-          blob: file,
+          blob: rawFile,
           toType: 'image/jpeg',
           quality: 0.8
         });
 
-        // 配列で返ってきた場合への対応
         const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-
-        // HEICから変換したJPEGファイルを生成
-        const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
-        file = new File([blobResult], newFileName, { type: 'image/jpeg' });
-        convertedFile = file;
+        const newFileName = rawFile.name.replace(/\.(heic|heif)$/i, '.jpg');
+        targetFile = new File([blobResult], newFileName, { type: 'image/jpeg' });
       } catch (err) {
         console.error('HEIC変換エラー:', err);
         exifStatus.style.color = '#d9534f';
         exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
         return;
       }
-    } else {
-      convertedFile = file;
     }
 
-    // B. Exif 位置情報の解析
+    convertedFile = targetFile;
+
+    // B. Exif 位置情報の解析（Android/iOS共通）
     exifStatus.textContent = '写真の位置情報を解析中...';
 
-    EXIF.getData(file, function() {
+    // EXIF.getData に渡すオブジェクトを統一
+    EXIF.getData(targetFile, function() {
       const latData = EXIF.getTag(this, 'GPSLatitude');
       const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
       const lngData = EXIF.getTag(this, 'GPSLongitude');
@@ -404,7 +403,7 @@
       } else {
         targetLocation = null;
         exifStatus.style.color = '#d9534f';
-        exifStatus.textContent = '❌ エラー: この写真にはGPS位置情報（Exif）が含まれていません。';
+        exifStatus.textContent = '❌ エラー: 位置情報（Exif）が含まれていません。カメラアプリの位置情報設定をご確認ください。';
       }
     });
   });
