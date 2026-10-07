@@ -420,11 +420,16 @@
   const closeBtn = document.getElementById('close-form-btn');
   const postForm = document.getElementById('post-form');
 
+  // ★ 追加: Leaflet マップへのタッチ・クリックイベントの突き抜け（伝播）を完全に遮断 ★
+  L.DomEvent.disableClickPropagation(openBtn);
+  L.DomEvent.disableClickPropagation(modal);
+  
   openBtn.addEventListener('click', () => {
     modal.style.display = 'flex';
     exifStatus.textContent = '';
     targetLocation = null;
   });
+  
   closeBtn.addEventListener('click', () => modal.style.display = 'none');
   postForm.addEventListener('submit', async (e) => {
     e.preventDefault();
