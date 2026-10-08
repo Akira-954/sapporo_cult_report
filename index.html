@@ -361,10 +361,16 @@
             </div>
           `;
 
-          L.marker([doc.lat, doc.lng])
-            .bindPopup(popupContent)
-            .addTo(markerGroup);
-        });
+          L.circleMarker([doc.lat, doc.lng], {
+            radius: 7,            // ★サイズ（小さめ。好みに合わせて 6〜9 などで調整）
+            fillColor: '#ff3b30', // ★赤色（塗りつぶし）
+            color: '#ffffff',     // ★枠線の色（白）
+            weight: 2,            // ★枠線の太さ
+            opacity: 1,           // 枠線の不透明度
+            fillOpacity: 0.9      // 塗りつぶしの不透明度
+          })
+          .bindPopup(popupContent)
+          .addTo(markerGroup);
       }
     } catch (e) {
       console.error('Fetch Error:', e);
