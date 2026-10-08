@@ -487,41 +487,17 @@
   const exifStatus = document.getElementById('exif-status');
   const submitBtn = document.getElementById('submit-btn');
 
-  fileInput.addEventListener('change', async function(e) {
+fileInput.addEventListener('change', async function(e) {
     let file = e.target.files[0];
     if (!file) return;
 
     exifStatus.style.color = '#007aff';
-    exifStatus.textContent = '画像を処理中...';
+    exifStatus.textContent = '写真のExif情報を解析中...';
     targetLocation = null;
     convertedFile = null;
     photoFormattedDateTime = null;
 
-    const fileNameLower = file.name.toLowerCase();
-    const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
-
-    if (isHeic) {
-      exifStatus.textContent = '🔄 HEIC画像をJPEGに変換中...';
-      try {
-        const convertedBlob = await heic2any({
-          blob: file,
-          toType: 'image/jpeg',
-          quality: 0.8
-        });
-
-        const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-        const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
-        file = new File([blobResult], newFileName, { type: 'image/jpeg' });
-      } catch (err) {
-        console.error('HEIC変換エラー:', err);
-        exifStatus.style.color = '#d9534f';
-        exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
-        return;
-      }
-    }
-
-    exifStatus.textContent = '写真のExif情報を解析中...';
-
+    // ★ 1. HEIC変換を行う前に、まずは元ファイル(file)から Exif を解析する
     EXIF.getData(file, async function() {
       const latData = EXIF.getTag(this, 'GPSLatitude');
       const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
@@ -540,6 +516,32 @@
 
       if (lat && lng) {
         targetLocation = { lat: lat, lng: lng };
+        
+        // ★ 2. 位置情報の取得に成功したら、HEICの場合はここで変換を行う
+        const fileNameLower = file.name.toLowerCase();
+        const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
+
+        if (isHeic) {
+          exifStatus.textContent = '🔄 HEIC画像をJPEGに変換中...';
+          try {
+            const convertedBlob = await heic2any({
+              blob: file,
+              toType: 'image/jpeg',
+              quality: 0.8
+            });
+
+            const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+            const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+            file = new File([blobResult], newFileName, { type: 'image/jpeg' });
+          } catch (err) {
+            console.error('HEIC変換エラー:', err);
+            exifStatus.style.color = '#d9534f';
+            exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
+            return;
+          }
+        }
+
+        // ★ 3. 画像の圧縮処理を行う
         exifStatus.textContent = '⚡ 画像を自動最適化（圧縮）中...';
         try {
           convertedFile = await compressImage(file, 1600, 1600, 0.8);
