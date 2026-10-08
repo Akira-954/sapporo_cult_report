@@ -12,8 +12,8 @@
   <!-- Supabase JS SDK -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
-  <!-- Exif.js -->
-  <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+  <!-- ExifReader (HEIC/JPEG対応のExif解析ライブラリ) -->
+  <script src="https://cdn.jsdelivr.net/npm/exifreader@4.23.0/dist/exif-reader.min.js"></script>
 
   <!-- heic2any (HEIC to JPEG 変換ライブラリ) -->
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
@@ -290,13 +290,13 @@
   }
   initDateFilter();
 
-    // URLから指定したパラメータを取得する関数
+  // URLから指定したパラメータを取得する関数
   function getUrlParam(paramName) {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get(paramName);
   }
   
-  // ページ読み込み時に 'author' パラメータを取得（例: ?author=A さん ➔ "Aさん"）
+  // ページ読み込み時に 'author' パラメータを取得
   const currentAuthor = getUrlParam('author');
 
   // 3. マップ上のピンを表示する関数（日付フィルター対応）
@@ -324,14 +324,11 @@
           if (!doc.found_at) return false;
           
           if (selectedFilter === 'all') {
-            // 全期間表示（すべて残す）
             return true; 
           } else if (selectedFilter === 'recent_year') {
-            // 直近1年間
             const foundDate = new Date(doc.found_at);
             return foundDate >= oneYearAgo;
           } else {
-            // 指定年（例: '2025' で前方一致）
             return doc.found_at.startsWith(selectedFilter);
           }
         });
@@ -367,15 +364,16 @@
           `;
 
           L.circleMarker([doc.lat, doc.lng], {
-            radius: 8,            // ★サイズ（小さめ。好みに合わせて 6〜9 などで調整）
-            fillColor: '#ff0d00', // ★赤色（塗りつぶし）
-            color: '#000000',     // ★枠線の色（黒）
-            weight: 2,            // ★枠線の太さ
-            opacity: 1,           // 枠線の不透明度
-            fillOpacity: 0.9      // 塗りつぶしの不透明度
+            radius: 8,
+            fillColor: '#ff0d00',
+            color: '#000000',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
           })
           .bindPopup(popupContent)
-          .addTo(markerGroup);}); 
+          .addTo(markerGroup);
+        });
       }
     } catch (e) {
       console.error('Fetch Error:', e);
@@ -459,17 +457,10 @@
     });
   }
 
-  // 6. Exif 解析＆自動圧縮処理
+  // 6. Exif 解析＆自動圧縮処理 (ExifReader 使用)
   let targetLocation = null;
   let convertedFile = null;
   let photoFormattedDateTime = null;
-
-  function convertDMSToDD(dms, ref) {
-    if (!dms) return null;
-    let dd = dms[0] + dms[1] / 60 + dms[2] / 3600;
-    if (ref === "S" || ref === "W") dd = dd * -1;
-    return dd;
-  }
 
   function formatExifDateTime(dateTimeStr) {
     if (!dateTimeStr) return null;
@@ -487,7 +478,7 @@
   const exifStatus = document.getElementById('exif-status');
   const submitBtn = document.getElementById('submit-btn');
 
-fileInput.addEventListener('change', async function(e) {
+  fileInput.addEventListener('change', async function(e) {
     let file = e.target.files[0];
     if (!file) return;
 
@@ -497,69 +488,68 @@ fileInput.addEventListener('change', async function(e) {
     convertedFile = null;
     photoFormattedDateTime = null;
 
-    // ★ 1. HEIC変換を行う前に、まずは元ファイル(file)から Exif を解析する
-    EXIF.getData(file, async function() {
-      const latData = EXIF.getTag(this, 'GPSLatitude');
-      const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
-      const lngData = EXIF.getTag(this, 'GPSLongitude');
-      const lngRef = EXIF.getTag(this, 'GPSLongitudeRef');
+    try {
+      // 1. ExifReader でファイルから Exif データを解析 (HEIC/JPEG両対応)
+      const tags = await ExifReader.load(file);
 
-      const lat = convertDMSToDD(latData, latRef);
-      const lng = convertDMSToDD(lngData, lngRef);
+      // GPS情報の取得
+      if (tags.GPSLatitude && tags.GPSLongitude) {
+        const lat = tags.GPSLatitude.description;
+        const lng = tags.GPSLongitude.description;
+        targetLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
 
-      const dateTime = EXIF.getTag(this, 'DateTimeOriginal') || EXIF.getTag(this, 'DateTime');
-      if (dateTime) {
-        const datePart = dateTime.split(' ')[0].replace(/:/g, '-');
-        document.getElementById('post-found-at').value = datePart;
-        photoFormattedDateTime = formatExifDateTime(dateTime);
-      }
+        // 撮影日時の取得
+        const dateTimeTag = tags.DateTimeOriginal || tags.DateTime;
+        if (dateTimeTag && dateTimeTag.description) {
+          const dateTimeStr = dateTimeTag.description;
+          const datePart = dateTimeStr.split(' ')[0].replace(/:/g, '-');
+          document.getElementById('post-found-at').value = datePart;
+          photoFormattedDateTime = formatExifDateTime(dateTimeStr);
+        }
 
-      if (lat && lng) {
-        targetLocation = { lat: lat, lng: lng };
-        
-        // ★ 2. 位置情報の取得に成功したら、HEICの場合はここで変換を行う
+        // 2. HEIC 画像の場合は JPEG に変換
         const fileNameLower = file.name.toLowerCase();
         const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
 
         if (isHeic) {
           exifStatus.textContent = '🔄 HEIC画像をJPEGに変換中...';
-          try {
-            const convertedBlob = await heic2any({
-              blob: file,
-              toType: 'image/jpeg',
-              quality: 0.8
-            });
+          const convertedBlob = await heic2any({
+            blob: file,
+            toType: 'image/jpeg',
+            quality: 0.8
+          });
 
-            const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-            const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
-            file = new File([blobResult], newFileName, { type: 'image/jpeg' });
-          } catch (err) {
-            console.error('HEIC変換エラー:', err);
-            exifStatus.style.color = '#d9534f';
-            exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
-            return;
-          }
+          const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+          const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+          file = new File([blobResult], newFileName, { type: 'image/jpeg' });
         }
 
-        // ★ 3. 画像の圧縮処理を行う
+        // 3. 画像の圧縮処理
         exifStatus.textContent = '⚡ 画像を自動最適化（圧縮）中...';
         try {
           convertedFile = await compressImage(file, 1600, 1600, 0.8);
           exifStatus.style.color = '#28a745';
-          exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)}) ・ 画像圧縮完了`;
-          map.flyTo([lat, lng], 16);
+          exifStatus.textContent = `✓ 位置情報取得完了 (${targetLocation.lat.toFixed(4)}, ${targetLocation.lng.toFixed(4)}) ・ 画像準備完了`;
+          map.flyTo([targetLocation.lat, targetLocation.lng], 16);
         } catch (compressErr) {
           console.error('圧縮エラー:', compressErr);
           convertedFile = file;
           exifStatus.style.color = '#28a745';
-          exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+          exifStatus.textContent = `✓ 位置情報取得完了 (${targetLocation.lat.toFixed(4)}, ${targetLocation.lng.toFixed(4)})`;
         }
+
       } else {
         targetLocation = null;
         exifStatus.style.color = '#d9534f';
         exifStatus.textContent = '❌ エラー: この写真にはGPS位置情報（Exif）が含まれていません。';
       }
-    });
+
+    } catch (err) {
+      console.error('Exif解析エラー:', err);
+      targetLocation = null;
+      exifStatus.style.color = '#d9534f';
+      exifStatus.textContent = '❌ エラー: 写真のExif情報を読み取れませんでした。';
+    }
   });
 
   // 7. 投稿送信処理
@@ -585,10 +575,10 @@ fileInput.addEventListener('change', async function(e) {
   });
   
   closeBtn.addEventListener('click', () => modal.style.display = 'none');
+
   postForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    // ★ ここを追加：authorパラメータがない場合は投稿を拒否する
     if (!currentAuthor || currentAuthor.trim() === '') {
       alert('⚠️ 専用のURLからアクセスされていないため、投稿できません。');
       return;
@@ -608,7 +598,7 @@ fileInput.addEventListener('change', async function(e) {
     try {
       const foundAt = document.getElementById('post-found-at').value;
       
-      // ★ 重複チェック：同じ発見日（found_at）のデータが既に存在するか確認
+      // 重複チェック：同じ発見日（found_at）のデータが既に存在するか確認
       const { data: existingDocs, error: checkError } = await supabaseClient
         .from('documents')
         .select('id')
@@ -620,12 +610,11 @@ fileInput.addEventListener('change', async function(e) {
         alert(`⚠️ ${foundAt} の発見データは既に登録されています。`);
         submitBtn.disabled = false;
         submitBtn.textContent = '投稿する';
-        return; // 重複している場合はここで処理を中断
+        return;
       }
       
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
-
       const title = photoFormattedDateTime || `${foundAt}の投稿`;
 
       const file = convertedFile || fileInput.files[0];
@@ -650,7 +639,7 @@ fileInput.addEventListener('change', async function(e) {
         .from('strange-docs')
         .getPublicUrl(fileName);
 
-      // C. Databaseへデータ挿入
+      // Databaseへデータ挿入
       const { error: insertError } = await supabaseClient
         .from('documents')
         .insert([
@@ -663,7 +652,7 @@ fileInput.addEventListener('change', async function(e) {
             image_url: urlData.publicUrl,
             location: `SRID=4326;POINT(${targetLng} ${targetLat})`,
             is_approved: true,
-            author: currentAuthor // ★ URLから取得したAさん等の名前・IDをセット（無ければ null）
+            author: currentAuthor
           }
         ]);
 
