@@ -605,6 +605,22 @@
 
     try {
       const foundAt = document.getElementById('post-found-at').value;
+      
+      // ★ 重複チェック：同じ発見日（found_at）のデータが既に存在するか確認
+      const { data: existingDocs, error: checkError } = await supabaseClient
+        .from('documents')
+        .select('id')
+        .eq('found_at', foundAt);
+
+      if (checkError) throw checkError;
+
+      if (existingDocs && existingDocs.length > 0) {
+        alert(`⚠️ ${foundAt} の発見データは既に登録されています。`);
+        submitBtn.disabled = false;
+        submitBtn.textContent = '投稿する';
+        return; // 重複している場合はここで処理を中断
+      }
+      
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
 
