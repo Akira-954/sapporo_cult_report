@@ -328,11 +328,58 @@
   });
 
   // --------------------------------------------------
-  // 5. Exif（位置情報・撮影日時）解析処理
+  // 5. 画像圧縮処理関数 (Canvas使用)
+  // --------------------------------------------------
+  function compressImage(file, maxWidth = 1600, maxHeight = 1600, quality = 0.8) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        // 縦横比を維持しながら最大サイズ内に収める
+        if (width > maxWidth || height > maxHeight) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return reject(new Error('Canvas to Blob conversion failed'));
+            const compressedFileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+            const compressedFile = new File([blob], compressedFileName, {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            });
+            resolve(compressedFile);
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.onerror = (err) => reject(err);
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // --------------------------------------------------
+  // 6. Exif（位置情報・撮影日時）解析＆自動圧縮処理
   // --------------------------------------------------
   let targetLocation = null;
   let convertedFile = null;
-  let photoFormattedDateTime = null; // 撮影日時（タイトル用）保持変数
+  let photoFormattedDateTime = null;
 
   function convertDMSToDD(dms, ref) {
     if (!dms) return null;
@@ -341,13 +388,12 @@
     return dd;
   }
 
-  // EXIFのDateTime文字列 ("YYYY:MM:DD HH:MM:SS") を "YYYY年MM月DD日 HH:mm" に変換する関数
   function formatExifDateTime(dateTimeStr) {
     if (!dateTimeStr) return null;
     const parts = dateTimeStr.split(' ');
     if (parts.length < 2) return null;
-    const dateParts = parts[0].split(':'); // YYYY, MM, DD
-    const timeParts = parts[1].split(':'); // HH, MM, SS
+    const dateParts = parts[0].split(':');
+    const timeParts = parts[1].split(':');
     if (dateParts.length === 3 && timeParts.length >= 2) {
       return `${dateParts[0]}年${dateParts[1]}月${dateParts[2]}日 ${timeParts[0]}:${timeParts[1]}`;
     }
@@ -384,22 +430,18 @@
         const blobResult = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
         const newFileName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
         file = new File([blobResult], newFileName, { type: 'image/jpeg' });
-        convertedFile = file;
       } catch (err) {
         console.error('HEIC変換エラー:', err);
         exifStatus.style.color = '#d9534f';
         exifStatus.textContent = '❌ HEIC画像の変換に失敗しました。';
         return;
       }
-    } else {
-      convertedFile = file;
     }
 
-    // B. Exif 位置情報および撮影日時の解析
+    // B. Exif 位置情報および撮影日時の解析（圧縮前に実施）
     exifStatus.textContent = '写真のExif情報を解析中...';
 
-    EXIF.getData(file, function() {
-      // 1. 位置情報（GPS）の取得
+    EXIF.getData(file, async function() {
       const latData = EXIF.getTag(this, 'GPSLatitude');
       const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
       const lngData = EXIF.getTag(this, 'GPSLongitude');
@@ -408,22 +450,29 @@
       const lat = convertDMSToDD(latData, latRef);
       const lng = convertDMSToDD(lngData, lngRef);
 
-      // 2. 撮影日時の取得 ("YYYY:MM:DD HH:MM:SS" 形式)
       const dateTime = EXIF.getTag(this, 'DateTimeOriginal') || EXIF.getTag(this, 'DateTime');
       if (dateTime) {
-        // 発見日のフォーム（YYYY-MM-DD）にセット
         const datePart = dateTime.split(' ')[0].replace(/:/g, '-');
         document.getElementById('post-found-at').value = datePart;
-
-        // タイトル用に「YYYY年MM月DD日 HH:mm」形式を作成して保持
         photoFormattedDateTime = formatExifDateTime(dateTime);
       }
 
       if (lat && lng) {
         targetLocation = { lat: lat, lng: lng };
-        exifStatus.style.color = '#28a745';
-        exifStatus.textContent = `✓ 位置情報・撮影日時を取得しました (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-        map.flyTo([lat, lng], 16);
+        
+        // C. 解析完了後に画像を自動圧縮
+        exifStatus.textContent = '⚡ 画像を自動最適化（圧縮）中...';
+        try {
+          convertedFile = await compressImage(file, 1600, 1600, 0.8);
+          exifStatus.style.color = '#28a745';
+          exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)}) ・ 画像圧縮完了`;
+          map.flyTo([lat, lng], 16);
+        } catch (compressErr) {
+          console.error('圧縮エラー:', compressErr);
+          convertedFile = file; // 圧縮に失敗した場合は元ファイルを使用
+          exifStatus.style.color = '#28a745';
+          exifStatus.textContent = `✓ 位置情報取得完了 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        }
       } else {
         targetLocation = null;
         exifStatus.style.color = '#d9534f';
@@ -432,7 +481,7 @@
     });
   });
 
-  // 6. 投稿送信処理
+  // 7. 投稿送信処理
   const modal = document.getElementById('post-modal');
   const openBtn = document.getElementById('open-form-btn');
   const closeBtn = document.getElementById('close-form-btn');
@@ -468,7 +517,6 @@
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
 
-      // ★ 撮影日時（時間つき）があればそれをタイトルに、なければ発見日（年月日）をタイトルにする
       const title = photoFormattedDateTime || `${foundAt}の投稿`;
 
       const file = convertedFile || fileInput.files[0];
@@ -535,7 +583,7 @@
     }
   });
 
-  // 7. パスワード確認付き削除処理
+  // 8. パスワード確認付き削除処理
   async function deleteDocument(docId) {
     const password = prompt('削除するためのパスワードを入力してください:');
     
