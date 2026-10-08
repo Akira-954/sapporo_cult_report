@@ -201,7 +201,7 @@
 <div class="filter-container" id="filter-container">
   <select id="date-filter" class="date-filter-select">
     <option value="recent_year">直近1年間（すべて）</option>
-    <!-- 年月オプションは JS で動的生成 -->
+    <!-- 年オプションは JS で動的生成 -->
   </select>
   <button class="post-trigger-btn" id="open-form-btn">＋ 報告</button>
 </div>
@@ -274,18 +274,14 @@
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
-  // 年月フィルタのセレクトボックス初期化 (直近3年分の年月リストを生成)
+  // 年フィルタのセレクトボックス初期化 (直近1年間 + 過去の年リスト)
   const dateFilterSelect = document.getElementById('date-filter');
   function initDateFilter() {
-    const now = new Date();
-    for (let i = 0; i < 36; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const value = `${year}-${month}`;
+    const currentYear = new Date().getFullYear();
+    for (let year = currentYear; year >= currentYear - 5; year--) {
       const option = document.createElement('option');
-      option.value = value;
-      option.textContent = `${year}年${month}月`;
+      option.value = String(year);
+      option.textContent = `${year}年`;
       dateFilterSelect.appendChild(option);
     }
   }
@@ -316,11 +312,11 @@
           if (!doc.found_at) return false;
           
           if (selectedFilter === 'recent_year') {
-            // 直近1年間（found_atが1年前以降）
+            // 直近1年間（found_atが1年前の今日以降）
             const foundDate = new Date(doc.found_at);
             return foundDate >= oneYearAgo;
           } else {
-            // 指定年月（'YYYY-MM'で前方一致判定）
+            // 指定年（'YYYY' で前方一致判定）
             return doc.found_at.startsWith(selectedFilter);
           }
         });
@@ -365,7 +361,7 @@
     }
   }
 
-  // 年月選択が変更されたときのイベントハンドラ
+  // 年選択が変更されたときのイベントハンドラ
   dateFilterSelect.addEventListener('change', () => {
     const center = map.getCenter();
     loadMarkers(center.lat, center.lng);
