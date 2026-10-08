@@ -321,12 +321,15 @@
         const filteredData = data.filter(doc => {
           if (!doc.found_at) return false;
           
-          if (selectedFilter === 'recent_year') {
-            // 直近1年間（found_atが1年前の今日以降）
+          if (selectedFilter === 'all') {
+            // 全期間表示（すべて残す）
+            return true; 
+          } else if (selectedFilter === 'recent_year') {
+            // 直近1年間
             const foundDate = new Date(doc.found_at);
             return foundDate >= oneYearAgo;
           } else {
-            // 指定年（'YYYY' で前方一致判定）
+            // 指定年（例: '2025' で前方一致）
             return doc.found_at.startsWith(selectedFilter);
           }
         });
