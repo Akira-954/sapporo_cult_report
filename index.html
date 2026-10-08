@@ -415,6 +415,7 @@
     });
   });
 
+
   // 5. 画像圧縮処理関数
   function compressImage(file, maxWidth = 1600, maxHeight = 1600, quality = 0.8) {
     return new Promise((resolve, reject) => {
@@ -463,6 +464,7 @@
   let targetLocation = null;
   let convertedFile = null;
   let photoFormattedDateTime = null;
+  let currentFileHash = null;
 
   function convertDMSToDD(dms, ref) {
     if (!dms) return null;
@@ -496,6 +498,16 @@
     targetLocation = null;
     convertedFile = null;
     photoFormattedDateTime = null;
+    currentFileHash = null;
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      currentFileHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (hashErr) {
+      console.error('ハッシュ計算エラー:', hashErr);
+    }
 
     const fileNameLower = file.name.toLowerCase();
     const isHeic = fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type === 'image/heic';
@@ -604,23 +616,29 @@
     submitBtn.textContent = '送信中...';
 
     try {
-      const foundAt = document.getElementById('post-found-at').value;
-      
-      // ★ 重複チェック：同じ発見日（found_at）のデータが既に存在するか確認
+      // ★ 1. SHA-256 ハッシュによる重複チェック
+      if (!currentFileHash) {
+        alert('⚠️ 画像の判定データ取得に失敗しました。再度写真を選択してください。');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '投稿する';
+        return;
+      }
+
       const { data: existingDocs, error: checkError } = await supabaseClient
         .from('documents')
         .select('id')
-        .eq('found_at', foundAt);
+        .eq('image_hash', currentFileHash);
 
       if (checkError) throw checkError;
 
       if (existingDocs && existingDocs.length > 0) {
-        alert(`⚠️ ${foundAt} の発見データは既に登録されています。`);
+        alert('⚠️ この写真データは既にマップに登録されています。');
         submitBtn.disabled = false;
         submitBtn.textContent = '投稿する';
         return; // 重複している場合はここで処理を中断
       }
-      
+
+      const foundAt = document.getElementById('post-found-at').value;
       const category = document.getElementById('post-category').value;
       const description = document.getElementById('post-desc').value;
 
@@ -661,7 +679,8 @@
             image_url: urlData.publicUrl,
             location: `SRID=4326;POINT(${targetLng} ${targetLat})`,
             is_approved: true,
-            author: currentAuthor // ★ URLから取得したAさん等の名前・IDをセット（無ければ null）
+            author: currentAuthor,
+            image_hash: currentFileHash
           }
         ]);
 
@@ -675,6 +694,7 @@
       targetLocation = null;
       convertedFile = null;
       photoFormattedDateTime = null;
+      currentFileHash = null;
       modal.style.display = 'none';
 
       map.flyTo([targetLat, targetLng], 16);
