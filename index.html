@@ -287,6 +287,15 @@
   }
   initDateFilter();
 
+    // URLから指定したパラメータを取得する関数
+  function getUrlParam(paramName) {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(paramName);
+  }
+  
+  // ページ読み込み時に 'author' パラメータを取得（例: ?author=A さん ➔ "Aさん"）
+  const currentAuthor = getUrlParam('author');
+
   // 3. マップ上のピンを表示する関数（日付フィルター対応）
   async function loadMarkers(lat, lng, radiusMeters = 10000) {
     try {
@@ -600,6 +609,7 @@
         .from('strange-docs')
         .getPublicUrl(fileName);
 
+      // C. Databaseへデータ挿入
       const { error: insertError } = await supabaseClient
         .from('documents')
         .insert([
@@ -611,7 +621,8 @@
             description: description,
             image_url: urlData.publicUrl,
             location: `SRID=4326;POINT(${targetLng} ${targetLat})`,
-            is_approved: true
+            is_approved: true,
+            author: currentAuthor // ★ URLから取得したAさん等の名前・IDをセット（無ければ null）
           }
         ]);
 
