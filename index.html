@@ -581,6 +581,12 @@
   postForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
+    // ★ ここを追加：authorパラメータがない場合は投稿を拒否する
+    if (!currentAuthor || currentAuthor.trim() === '') {
+      alert('⚠️ 専用のURLからアクセスされていないため、投稿できません。');
+      return;
+    }
+
     if (!targetLocation) {
       alert('⚠️ 選択された写真から位置情報（Exif）を取得できませんでした。');
       return;
