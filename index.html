@@ -571,6 +571,11 @@
   L.DomEvent.disableClickPropagation(modal);
   
   openBtn.addEventListener('click', () => {
+    if (!currentAuthor || currentAuthor.trim() === '') {
+      alert('⚠️ この機能を利用するには、専用の登録用URLからアクセスしてください。');
+      return;
+    }
+    
     modal.style.display = 'flex';
     exifStatus.textContent = '';
     targetLocation = null;
