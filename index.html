@@ -46,12 +46,28 @@
       margin-right: 4px;
       margin-top: 4px;
     }
+    .overlap-picker { min-width: 210px; max-width: 250px; }
+    .overlap-picker-title { margin: 0 0 7px; font-size: 13px; }
+    .overlap-picker-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+    .overlap-picker-item {
+      width: 100%;
+      padding: 7px 8px;
+      border: 1px solid #e3e6e8;
+      border-radius: 6px;
+      background: #f8f9fa;
+      color: #333;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+    .overlap-picker-item strong { display: block; font-size: 12px; }
+    .overlap-picker-meta { display: block; margin-top: 2px; color: #777; font-size: 10px; }
 
     /* フィルターUIのコンテナ */
     .filter-container {
       position: fixed;
       top: 20px;
-      left: 20px;
+      left: 60px;
       z-index: 9990;
       display: flex;
       gap: 10px;
@@ -200,11 +216,17 @@
 <!-- 画面左上のヘッダーコントロール -->
 <div class="filter-container" id="filter-container">
   <select id="date-filter" class="date-filter-select">
-    <option value="recent_year">直近1年間（すべて）</option>
+    <option value="recent_year">直近一年間</option>
     <option value="all">全期間</option>
     <!-- 年オプションは JS で動的生成 -->
   </select>
-  <button class="post-trigger-btn" id="open-form-btn">＋ 報告</button>
+  <select id="category-filter" class="date-filter-select" aria-label="カテゴリで絞り込み">
+    <option value="all">すべて</option>
+    <option value="denchu">電柱怪文書</option>
+    <option value="wasure">忘れない</option>
+    <option value="etc">その他</option>
+  </select>
+  <button class="post-trigger-btn" id="open-form-btn">怪文書を報告</button>
 </div>
 
 <button id="locate-btn" class="locate-btn" title="現在地に移動">
@@ -276,6 +298,59 @@
   let refreshingMarkers = false;
   let skipNextMoveendReload = false;
 
+  function openPostDetail(marker) {
+    activeDocumentId = marker.featureDocumentId;
+    const markerLatLng = marker.getLatLng();
+    if (!map.getCenter().equals(markerLatLng)) {
+      skipNextMoveendReload = true;
+      map.panTo(markerLatLng);
+    }
+    marker.openPopup();
+  }
+
+  function openOverlapPicker(markers, latLng) {
+    activeDocumentId = null;
+
+    // タップしたときに中心へ移動させる
+    if (!map.getCenter().equals(latLng)) {
+      skipNextMoveendReload = true;
+      map.panTo(latLng);
+    }
+    const content = document.createElement('div');
+    content.className = 'overlap-picker';
+
+    const heading = document.createElement('h3');
+    heading.className = 'overlap-picker-title';
+    heading.textContent = `この場所の投稿（${markers.length}件）`;
+    content.appendChild(heading);
+
+    const list = document.createElement('ul');
+    list.className = 'overlap-picker-list';
+    markers.forEach(marker => {
+      const item = marker.featureDocumentInfo;
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'overlap-picker-item';
+
+      const title = document.createElement('strong');
+      title.textContent = item.title;
+      const meta = document.createElement('span');
+      meta.className = 'overlap-picker-meta';
+      meta.textContent = `${item.category} · ${item.foundAt} · ${item.author}`;
+      button.append(title, meta);
+      button.addEventListener('click', () => openPostDetail(marker));
+      row.appendChild(button);
+      list.appendChild(row);
+    });
+    content.appendChild(list);
+
+    L.popup({ autoPan: false, closeOnClick: false, maxWidth: 280 })
+      .setLatLng(latLng)
+      .setContent(content)
+      .openOn(map);
+  }
+
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
@@ -303,6 +378,7 @@
   const currentAuthor = getUrlParam('author');
 
   // 3. マップ上のピンを表示する関数（日付フィルター対応）
+  const categoryFilterSelect = document.getElementById('category-filter');
   async function loadMarkers(lat, lng, radiusMeters = 10000) {
     try {
       const { data, error } = await supabaseClient.rpc('get_documents_nearby', {
@@ -336,6 +412,7 @@
 
       if (data) {
         const selectedFilter = dateFilterSelect.value;
+        const selectedCategory = categoryFilterSelect.value;
         const now = new Date();
         const oneYearAgo = new Date();
         oneYearAgo.setFullYear(now.getFullYear() - 1);
@@ -344,17 +421,24 @@
         const filteredData = data.filter(doc => {
           if (!doc.found_at) return false;
 
+          let matchesDate;
           if (selectedFilter === 'all') {
             // 全期間表示（すべて残す）
-            return true; 
+            matchesDate = true;
           } else if (selectedFilter === 'recent_year') {
             // 直近1年間
             const foundDate = new Date(doc.found_at);
-            return foundDate >= oneYearAgo;
+            matchesDate = foundDate >= oneYearAgo;
           } else {
             // 指定年（例: '2025' で前方一致）
-            return doc.found_at.startsWith(selectedFilter);
+            matchesDate = doc.found_at.startsWith(selectedFilter);
           }
+
+          if (!matchesDate) return false;
+          if (selectedCategory === 'all') return true;
+
+          const details = documentDetails.get(doc.id) || {};
+          return (doc.category || details.category || '') === selectedCategory;
         });
 
         filteredData.forEach(doc => {
@@ -374,7 +458,7 @@
               <img src="${doc.image_url}" class="popup-img" alt="怪文書画像"/>
               <h3 style="margin: 8px 0 4px 0; font-size: 15px;">${doc.title || '怪文書'}</h3>
               <div style="font-size: 11px; color: #888; margin-bottom: 6px;">
-                ▷カテゴリ：${category}<br>▷登録者：${author}
+                カテゴリ：${category}<br>登録者：${author}
               </div>
               <p style="font-size: 12px; color: #444; margin: 0 0 6px 0;">${doc.description || ''}</p>
               <div style="margin-bottom: 8px;">${tagsHtml}</div>
@@ -387,7 +471,7 @@
                 font-size: 11px;
                 cursor: pointer;
                 width: 100%;
-              ">🗑 データを削除する</button>
+              ">データを削除する</button>
             </div>
           `;
 
@@ -404,14 +488,6 @@
             closeOnClick: false,
             autoPan: false
           })
-          .on('click', function() {
-            activeDocumentId = doc.id;
-            const markerLatLng = this.getLatLng();
-            if (!map.getCenter().equals(markerLatLng)) {
-              skipNextMoveendReload = true;
-              map.panTo(markerLatLng);
-            }
-          })
           .on('popupclose', function() {
             if (!refreshingMarkers && activeDocumentId === doc.id) {
               activeDocumentId = null;
@@ -419,6 +495,31 @@
           })
           .addTo(markerGroup);
           marker.featureDocumentId = doc.id;
+          marker.featureDocumentInfo = {
+            title: doc.title || '怪文書',
+            category: category,
+            foundAt: foundDate,
+            author: author
+          };
+          // 標準のクリックで詳細を開く動作を外し、重なり判定後に表示を決める。
+          marker.off('click', marker._openPopup, marker);
+          marker.on('click', function(event) {
+            L.DomEvent.stop(event);
+            const tappedPoint = map.latLngToContainerPoint(this.getLatLng());
+            const overlappingMarkers = [];
+            markerGroup.eachLayer(candidate => {
+              const candidatePoint = map.latLngToContainerPoint(candidate.getLatLng());
+              if (candidatePoint.distanceTo(tappedPoint) <= 24) {
+                overlappingMarkers.push(candidate);
+              }
+            });
+
+            if (overlappingMarkers.length > 1) {
+              openOverlapPicker(overlappingMarkers, this.getLatLng());
+            } else {
+              openPostDetail(this);
+            }
+          });
         });
 
         refreshingMarkers = false;
@@ -435,6 +536,11 @@
 
   // 年選択が変更されたときのイベントハンドラ
   dateFilterSelect.addEventListener('change', () => {
+    const center = map.getCenter();
+    loadMarkers(center.lat, center.lng);
+  });
+
+  categoryFilterSelect.addEventListener('change', () => {
     const center = map.getCenter();
     loadMarkers(center.lat, center.lng);
   });
