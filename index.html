@@ -272,6 +272,9 @@
   // 2. Leaflet マップ初期化
   const map = L.map('map').setView([43.0642, 141.3469], 13);
   const markerGroup = L.layerGroup().addTo(map);
+  let activeDocumentId = null;
+  let refreshingMarkers = false;
+  let skipNextMoveendReload = false;
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors'
@@ -310,7 +313,25 @@
 
       if (error) return console.error('Supabase Error:', error.message);
 
-      // マーカーをリセット
+      // RPC の戻り値に author / category が含まれない場合に備えて、
+      // documents テーブルから表示用の項目を補完する。
+      const documentIds = (data || []).map(doc => doc.id).filter(Boolean);
+      let documentDetails = new Map();
+      if (documentIds.length > 0) {
+        const { data: details, error: detailsError } = await supabaseClient
+          .from('documents')
+          .select('id, author, category')
+          .in('id', documentIds);
+
+        if (detailsError) {
+          console.warn('Document details could not be loaded:', detailsError.message);
+        } else {
+          documentDetails = new Map((details || []).map(detail => [detail.id, detail]));
+        }
+      }
+
+      // マーカーをリセット。選択中の投稿は再描画後にポップアップを復元する。
+      refreshingMarkers = true;
       markerGroup.clearLayers();
 
       if (data) {
@@ -337,19 +358,23 @@
         });
 
         filteredData.forEach(doc => {
+          const details = documentDetails.get(doc.id) || {};
           const tagsHtml = doc.tags && doc.tags.length > 0 
             ? doc.tags.map(tag => `<span class="tag-badge">#${tag}</span>`).join('') 
             : '';
 
           const foundDate = doc.found_at ? doc.found_at : '不明';
-          const createdDate = doc.created_at ? new Date(doc.created_at).toLocaleDateString('ja-JP') : '';
+          const author = doc.author || details.author || '不明';
+          const categoryValue = doc.category || details.category || '';
+          const categoryLabels = { denchu: '電柱怪文書', wasure: '忘れない', etc: 'その他' };
+          const category = categoryLabels[categoryValue] || categoryValue || '不明';
 
           const popupContent = `
             <div style="max-width: 220px;">
               <img src="${doc.image_url}" class="popup-img" alt="怪文書画像"/>
               <h3 style="margin: 8px 0 4px 0; font-size: 15px;">${doc.title || '怪文書'}</h3>
               <div style="font-size: 11px; color: #888; margin-bottom: 6px;">
-                📅 発見: ${foundDate} / 登録: ${createdDate}
+                ▷カテゴリ：${category}<br>▷登録者：${author}
               </div>
               <p style="font-size: 12px; color: #444; margin: 0 0 6px 0;">${doc.description || ''}</p>
               <div style="margin-bottom: 8px;">${tagsHtml}</div>
@@ -366,7 +391,7 @@
             </div>
           `;
 
-          L.circleMarker([doc.lat, doc.lng], {
+          const marker = L.circleMarker([doc.lat, doc.lng], {
             radius: 8,            // ★サイズ（小さめ。好みに合わせて 6〜9 などで調整）
             fillColor: '#ff0d00', // ★赤色（塗りつぶし）
             color: '#000000',     // ★枠線の色（黒）
@@ -374,8 +399,34 @@
             opacity: 1,           // 枠線の不透明度
             fillOpacity: 0.9      // 塗りつぶしの不透明度
           })
-          .bindPopup(popupContent)
-          .addTo(markerGroup);}); 
+          .bindPopup(popupContent, {
+            autoClose: true,
+            closeOnClick: false,
+            autoPan: false
+          })
+          .on('click', function() {
+            activeDocumentId = doc.id;
+            const markerLatLng = this.getLatLng();
+            if (!map.getCenter().equals(markerLatLng)) {
+              skipNextMoveendReload = true;
+              map.panTo(markerLatLng);
+            }
+          })
+          .on('popupclose', function() {
+            if (!refreshingMarkers && activeDocumentId === doc.id) {
+              activeDocumentId = null;
+            }
+          })
+          .addTo(markerGroup);
+          marker.featureDocumentId = doc.id;
+        });
+
+        refreshingMarkers = false;
+        if (activeDocumentId) {
+          markerGroup.eachLayer(marker => {
+            if (marker.featureDocumentId === activeDocumentId) marker.openPopup();
+          });
+        }
       }
     } catch (e) {
       console.error('Fetch Error:', e);
@@ -393,6 +444,11 @@
   loadMarkers(center.lat, center.lng);
 
   map.on('moveend', () => {
+    if (skipNextMoveendReload) {
+      skipNextMoveendReload = false;
+      return;
+    }
+    if (refreshingMarkers) return;
     const newCenter = map.getCenter();
     loadMarkers(newCenter.lat, newCenter.lng);
   });
